@@ -4,15 +4,17 @@ name = "rocket_logger"
 version = "0.1.0"
 
 [dependencies]
+assign-resources = "0.4.1"
 cortex-m = { version = "0.7.7", features = ["inline-asm", "critical-section-single-core"] }
 cortex-m-rt = "0.7.3"
 defmt = { version = "0.3.8", optional = true }
 defmt-rtt = { version = "0.4.1", optional = true }
 embassy-executor = { version = "0.5.0", features = ["arch-cortex-m", "executor-thread", "integrated-timers"] }
 embassy-futures = "0.1.1"
-embassy-stm32 = {version = "0.1.0", features =  ["defmt", "time-driver-any", "stm32h750vb", "memory-x", "unstable-pac", "exti"]}
+embassy-stm32 = { version = "0.1.0", features =  ["defmt", "time-driver-any", "stm32h750vb", "memory-x", "unstable-pac", "exti"] }
 embassy-sync = "0.6.0"
 embassy-time = { version = "0.3.1", features = ["tick-hz-32_768"] }
+log = "0.4.22"
 panic-halt = "0.2.0"
 panic-probe = { version = "0.3.2", features = ["print-defmt"], optional = true }
 
@@ -49,3 +51,9 @@ debug = [
     "embassy-time/defmt-timestamp-uptime",
     "embassy-stm32/defmt",
 ]
+log = []
+
+[patch.crates-io]
+embassy-time = { git = "https://github.com/embassy-rs/embassy", rev = "4e5a646f8b1905de014462f5f0441952ec7e209b" }
+embassy-executor = { git = "https://github.com/embassy-rs/embassy", rev = "4e5a646f8b1905de014462f5f0441952ec7e209b" }
+embassy-stm32 = { git = "https://github.com/embassy-rs/embassy", rev = "4e5a646f8b1905de014462f5f0441952ec7e209b" }
