@@ -5,6 +5,10 @@ mod fmt;
 
 mod sd_card;
 
+use embassy_sync::{
+    blocking_mutex::raw::ThreadModeRawMutex,
+    channel::{self, Channel},
+};
 #[cfg(not(feature = "defmt"))]
 use panic_halt as _;
 #[cfg(feature = "defmt")]
@@ -17,14 +21,15 @@ use embassy_stm32::{
     gpio::{Level, Output, Speed},
     peripherals, sdmmc, Config,
 };
-use embassy_time::{Duration, Ticker};
-use fmt::info;
+use embassy_time::{Duration, Instant, Ticker};
+use fmt::{info, warn};
 
 assign_resources! {
     analog_read: Analog {
         rx_dma: DMA2_CH0,
         adc: ADC1,
-        pin: PA0,
+        pin_a: PA0,
+        pin_b: PA1,
     },
     led: Led {
         led: PE3,
@@ -39,6 +44,17 @@ assign_resources! {
         d3: PC11,
     },
 }
+
+const TARGET_FREQUENCY: u64 = 16_000;
+
+const BUFFER_LEN: usize = 8 * 1024;
+pub type Sample = (u16, u16);
+type M = ThreadModeRawMutex;
+
+static CHANNEL: Channel<M, Sample, BUFFER_LEN> = Channel::new();
+
+pub type Receiver = channel::Receiver<'static, M, Sample, BUFFER_LEN>;
+pub type Sender = channel::Sender<'static, M, Sample, BUFFER_LEN>;
 
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
@@ -73,8 +89,16 @@ async fn main(spawner: Spawner) {
     let r = split_resources!(p);
 
     spawner.must_spawn(blink(r.led, Duration::from_secs(1)));
-    spawner.must_spawn(log_analog(r.analog_read, Duration::from_millis(100)));
-    spawner.must_spawn(sd_card::write_to_sd_card(r.sd_card));
+
+    // TODO(shelbyd): Why do we need to multiply by 4/5?
+    let nanos = 1_000_000_000 * 4 / TARGET_FREQUENCY / 5;
+    info!("Logging every {}ns", nanos);
+    spawner.must_spawn(publish_analog(
+        r.analog_read,
+        Duration::from_nanos(nanos),
+        CHANNEL.sender(),
+    ));
+    spawner.must_spawn(sd_card::write_to_sd_card(r.sd_card, CHANNEL.receiver()));
 
     info!("All tasks spawned");
 }
@@ -94,24 +118,47 @@ async fn blink(led: Led, loop_time: Duration) {
 }
 
 #[embassy_executor::task]
-async fn log_analog(mut analog: Analog, loop_time: Duration) {
+async fn publish_analog(mut analog: Analog, loop_time: Duration, sender: Sender) {
     let mut adc = Adc::new(analog.adc);
-    let mut pin = analog.pin.degrade_adc();
-    let mut measurements = [0; 1];
 
+    let mut pin_a = analog.pin_a.degrade_adc();
+    let mut pin_b = analog.pin_b.degrade_adc();
+
+    let mut measurements = [0; 2];
+
+    await_something_reading(&sender).await;
     let mut ticker = Ticker::every(loop_time);
 
     loop {
         adc.read(
             &mut analog.rx_dma,
-            [(&mut pin, SampleTime::CYCLES16_5)].into_iter(),
+            [
+                (&mut pin_a, SampleTime::CYCLES16_5),
+                (&mut pin_b, SampleTime::CYCLES16_5),
+            ]
+            .into_iter(),
             &mut measurements,
         )
         .await;
 
-        // info!("Read: {}", measurements);
+        let sample = (measurements[0], measurements[1]);
+        if let Err(_) = sender.try_send(sample) {
+            let start = Instant::now();
+            sender.send((measurements[0], measurements[1])).await;
+            warn!(
+                "Sample sender blocked for {}us",
+                start.elapsed().as_micros()
+            );
+        }
+
         ticker.next().await;
     }
+}
+
+async fn await_something_reading(sender: &Sender) {
+    while let Ok(_) = sender.try_send(Default::default()) {}
+
+    sender.send(Default::default()).await;
 }
 
 embassy_stm32::bind_interrupts!(struct Irqs {

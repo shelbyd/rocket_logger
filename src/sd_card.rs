@@ -2,15 +2,15 @@ use embassy_stm32::{
     sdmmc::{DataBlock, Error, Instance, Sdmmc},
     time::mhz,
 };
-use embassy_time::{Duration, Instant, Timer};
+use embassy_time::Instant;
 
 use crate::{
     fmt::{info, unwrap},
-    Irqs, SdCard,
+    Irqs, Receiver, SdCard,
 };
 
 #[embassy_executor::task]
-pub async fn write_to_sd_card(sd_card: SdCard) {
+pub async fn write_to_sd_card(sd_card: SdCard, samples: Receiver) {
     let mut sdmmc = Sdmmc::new_4bit(
         sd_card.sdmmc,
         Irqs,
@@ -25,14 +25,34 @@ pub async fn write_to_sd_card(sd_card: SdCard) {
 
     unwrap!(sdmmc.init_card(mhz(25)).await);
 
-    unwrap!(benchmark_sample_writing::<u8, _>(&mut sdmmc, 100_000).await);
-    unwrap!(benchmark_sample_writing::<(u16, u16), _>(&mut sdmmc, 100_000).await);
+    // unwrap!(benchmark_sample_writing::<u8, _>(&mut sdmmc, 100_000).await);
+    // unwrap!(benchmark_sample_writing::<(u16, u16), _>(&mut sdmmc, 100_000).await);
 
-    let _writer = unwrap!(SectorWriter::<u16, _>::new(&mut sdmmc).await);
+    let mut writer = unwrap!(SectorWriter::new(&mut sdmmc).await);
 
+    let log_every = 100_000;
+
+    info!("Beginning logging");
+    drain(&samples);
     loop {
-        Timer::after(Duration::from_millis(100)).await;
+        let start = Instant::now();
+        for _ in 0..log_every {
+            let sample = samples.receive().await;
+            unwrap!(writer.write(sample).await);
+        }
+        let elapsed = start.elapsed();
+
+        info!(
+            "Logging at {} hz, {} samples in {}ms",
+            (log_every * 1000) / elapsed.as_millis(),
+            log_every,
+            elapsed.as_millis(),
+        );
     }
+}
+
+fn drain(samples: &Receiver) {
+    while let Ok(_) = samples.try_receive() {}
 }
 
 struct SectorWriter<'s, T, I: Instance> {
@@ -75,6 +95,7 @@ impl<'s, T, I: Instance> SectorWriter<'s, T, I> {
             let Err((block, e)) = self.buffer.extend(next_extend) else {
                 return Ok(());
             };
+            // info!("Flushing block {}", self.next_block);
             next_extend = e;
 
             block[0] = self.header;
@@ -157,6 +178,7 @@ impl Buffer {
     }
 }
 
+#[allow(unused)]
 async fn benchmark_sample_writing<T, I: Instance>(
     sdmmc: &mut Sdmmc<'static, I>,
     n: u64,
