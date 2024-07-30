@@ -13,7 +13,7 @@ embassy-executor = { version = "0.5.0", features = ["arch-cortex-m", "executor-t
 embassy-futures = "0.1.1"
 embassy-stm32 = { version = "0.1.0", features =  ["defmt", "time-driver-any", "stm32h750vb", "memory-x", "unstable-pac", "exti"] }
 embassy-sync = "0.6.0"
-embassy-time = { version = "0.3.1", features = ["tick-hz-32_768"] }
+embassy-time = { version = "0.3.1", features = ["tick-hz-1_000_000"] }
 heapless = "0.8.0"
 log = { version = "0.4.22", optional = true }
 panic-halt = "0.2.0"

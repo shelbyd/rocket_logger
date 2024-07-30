@@ -2,7 +2,6 @@
 #![no_main]
 
 mod fmt;
-
 mod sd_card;
 
 use embassy_sync::{
@@ -21,7 +20,7 @@ use embassy_stm32::{
     gpio::{Level, Output, Speed},
     peripherals, sdmmc, Config,
 };
-use embassy_time::{Duration, Instant, Ticker};
+use embassy_time::{Duration, Instant, Ticker, TICK_HZ};
 use fmt::{info, warn};
 
 assign_resources! {
@@ -45,7 +44,8 @@ assign_resources! {
     },
 }
 
-const SAMPLE_EVERY: Duration = Duration::from_micros(50);
+const SAMPLE_FREQUENCY: u64 = 20_000;
+const WARN_BLOCKED_SENDS: bool = false;
 
 const BUFFER_LEN: usize = 8 * 1024;
 pub type Sample = (u16, u16);
@@ -86,11 +86,14 @@ async fn main(spawner: Spawner) {
 
     info!("Starting up");
 
+    info!("Embassy clock ticking at {} hz", TICK_HZ);
+
     let r = split_resources!(p);
 
     spawner.must_spawn(blink(r.led, Duration::from_secs(1)));
 
-    let publish_analog = publish_analog(r.analog_read, SAMPLE_EVERY, CHANNEL.sender());
+    let sample_every = Duration::from_nanos(1_000_000_000 / SAMPLE_FREQUENCY);
+    let publish_analog = publish_analog(r.analog_read, sample_every, CHANNEL.sender());
     let write_to_sd_card = sd_card::write_to_sd_card(r.sd_card, CHANNEL.receiver());
 
     spawner.must_spawn(publish_analog);
@@ -141,12 +144,13 @@ async fn publish_analog(mut analog: Analog, loop_time: Duration, sender: Sender)
         if let Err(_) = sender.try_send(sample) {
             let start = Instant::now();
             sender.send((measurements[0], measurements[1])).await;
-            warn!(
-                "Sample sender blocked for {}us",
-                start.elapsed().as_micros()
-            );
+            if WARN_BLOCKED_SENDS {
+                warn!(
+                    "Sample sender blocked for {}us",
+                    start.elapsed().as_micros()
+                );
+            }
         }
-
         ticker.next().await;
     }
 }
