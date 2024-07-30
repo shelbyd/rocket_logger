@@ -28,7 +28,7 @@ pub async fn write_to_sd_card(sd_card: SdCard, samples: Receiver) {
     // unwrap!(benchmark_sample_writing::<u8, _>(&mut sdmmc, 100_000).await);
     // unwrap!(benchmark_sample_writing::<(u16, u16), _>(&mut sdmmc, 100_000).await);
 
-    let mut writer = unwrap!(SectorWriter::new(&mut sdmmc).await);
+    let mut writer = unwrap!(SectorWriter::<crate::Sample, _>::new(&mut sdmmc).await);
 
     let log_every = 100_000;
 

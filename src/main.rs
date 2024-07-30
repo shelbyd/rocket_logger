@@ -45,7 +45,7 @@ assign_resources! {
     },
 }
 
-const TARGET_FREQUENCY: u64 = 16_000;
+const SAMPLE_EVERY: Duration = Duration::from_micros(50);
 
 const BUFFER_LEN: usize = 8 * 1024;
 pub type Sample = (u16, u16);
@@ -90,15 +90,11 @@ async fn main(spawner: Spawner) {
 
     spawner.must_spawn(blink(r.led, Duration::from_secs(1)));
 
-    // TODO(shelbyd): Why do we need to multiply by 4/5?
-    let nanos = 1_000_000_000 * 4 / TARGET_FREQUENCY / 5;
-    info!("Logging every {}ns", nanos);
-    spawner.must_spawn(publish_analog(
-        r.analog_read,
-        Duration::from_nanos(nanos),
-        CHANNEL.sender(),
-    ));
-    spawner.must_spawn(sd_card::write_to_sd_card(r.sd_card, CHANNEL.receiver()));
+    let publish_analog = publish_analog(r.analog_read, SAMPLE_EVERY, CHANNEL.sender());
+    let write_to_sd_card = sd_card::write_to_sd_card(r.sd_card, CHANNEL.receiver());
+
+    spawner.must_spawn(publish_analog);
+    spawner.must_spawn(write_to_sd_card);
 
     info!("All tasks spawned");
 }
@@ -133,15 +129,15 @@ async fn publish_analog(mut analog: Analog, loop_time: Duration, sender: Sender)
         adc.read(
             &mut analog.rx_dma,
             [
-                (&mut pin_a, SampleTime::CYCLES16_5),
-                (&mut pin_b, SampleTime::CYCLES16_5),
+                (&mut pin_a, SampleTime::CYCLES2_5),
+                (&mut pin_b, SampleTime::CYCLES2_5),
             ]
             .into_iter(),
             &mut measurements,
         )
         .await;
-
         let sample = (measurements[0], measurements[1]);
+
         if let Err(_) = sender.try_send(sample) {
             let start = Instant::now();
             sender.send((measurements[0], measurements[1])).await;
