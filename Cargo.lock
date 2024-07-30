@@ -638,6 +638,7 @@ dependencies = [
  "embassy-stm32",
  "embassy-sync 0.6.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "embassy-time",
+ "heapless",
  "log",
  "panic-halt",
  "panic-probe",

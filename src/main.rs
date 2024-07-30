@@ -3,6 +3,8 @@
 
 mod fmt;
 
+mod sd_card;
+
 #[cfg(not(feature = "defmt"))]
 use panic_halt as _;
 #[cfg(feature = "defmt")]
@@ -13,7 +15,7 @@ use embassy_executor::Spawner;
 use embassy_stm32::{
     adc::{Adc, AdcChannel, SampleTime},
     gpio::{Level, Output, Speed},
-    peripherals, Config,
+    peripherals, sdmmc, Config,
 };
 use embassy_time::{Duration, Ticker};
 use fmt::info;
@@ -27,6 +29,15 @@ assign_resources! {
     led: Led {
         led: PE3,
     },
+    sd_card: SdCard {
+        sdmmc: SDMMC1,
+        clk: PC12,
+        cmd: PD2,
+        d0: PC8,
+        d1: PC9,
+        d2: PC10,
+        d3: PC11,
+    },
 }
 
 #[embassy_executor::main]
@@ -35,6 +46,16 @@ async fn main(spawner: Spawner) {
 
     {
         use embassy_stm32::rcc::*;
+
+        config.rcc.pll1 = Some(Pll {
+            source: PllSource::HSI,
+            prediv: PllPreDiv::DIV4,
+            mul: PllMul::MUL50,
+            divp: Some(PllDiv::DIV2),
+            divq: Some(PllDiv::DIV4), // default clock chosen by SDMMCSEL. 200 Mhz
+            divr: None,
+        });
+
         config.rcc.pll2 = Some(Pll {
             source: PllSource::HSI,
             prediv: PllPreDiv::DIV4,
@@ -53,6 +74,7 @@ async fn main(spawner: Spawner) {
 
     spawner.must_spawn(blink(r.led, Duration::from_secs(1)));
     spawner.must_spawn(log_analog(r.analog_read, Duration::from_millis(100)));
+    spawner.must_spawn(sd_card::write_to_sd_card(r.sd_card));
 
     info!("All tasks spawned");
 }
@@ -63,11 +85,9 @@ async fn blink(led: Led, loop_time: Duration) {
     let mut ticker = Ticker::every(loop_time / 2);
 
     loop {
-        info!("LED High");
         led.set_high();
         ticker.next().await;
 
-        info!("LED Low");
         led.set_low();
         ticker.next().await;
     }
@@ -89,7 +109,11 @@ async fn log_analog(mut analog: Analog, loop_time: Duration) {
         )
         .await;
 
-        info!("Read: {}", measurements);
+        // info!("Read: {}", measurements);
         ticker.next().await;
     }
 }
+
+embassy_stm32::bind_interrupts!(struct Irqs {
+    SDMMC1 => sdmmc::InterruptHandler<peripherals::SDMMC1>;
+});
