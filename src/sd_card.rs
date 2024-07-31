@@ -6,7 +6,7 @@ use embassy_time::Instant;
 
 use crate::{
     fmt::{info, unwrap},
-    Irqs, Receiver, SdCard,
+    FrequencyLogger, Irqs, Receiver, SdCard,
 };
 
 #[embassy_executor::task]
@@ -30,24 +30,15 @@ pub async fn write_to_sd_card(sd_card: SdCard, samples: Receiver) {
 
     let mut writer = unwrap!(SectorWriter::<crate::Sample, _>::new(&mut sdmmc).await);
 
-    let log_every = 100_000;
-
     info!("Beginning logging");
     drain(&samples);
-    loop {
-        let start = Instant::now();
-        for _ in 0..log_every {
-            let sample = samples.receive().await;
-            unwrap!(writer.write(sample).await);
-        }
-        let elapsed = start.elapsed();
 
-        info!(
-            "Logging at {} hz, {} samples in {}ms",
-            (log_every * 1000) / elapsed.as_millis(),
-            log_every,
-            elapsed.as_millis(),
-        );
+    let mut frequency_logger = FrequencyLogger::new("Writing to SD");
+    loop {
+        frequency_logger.tick();
+
+        let sample = samples.receive().await;
+        unwrap!(writer.write(sample).await);
     }
 }
 

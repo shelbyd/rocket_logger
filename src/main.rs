@@ -90,7 +90,7 @@ async fn main(spawner: Spawner) {
 
     let r = split_resources!(p);
 
-    spawner.must_spawn(blink(r.led, Duration::from_secs(1)));
+    // spawner.must_spawn(blink(r.led, Duration::from_secs(1)));
 
     let sample_every = Duration::from_nanos(1_000_000_000 / SAMPLE_FREQUENCY);
     let publish_analog = publish_analog(r.analog_read, sample_every, CHANNEL.sender());
@@ -128,7 +128,11 @@ async fn publish_analog(mut analog: Analog, loop_time: Duration, sender: Sender)
     await_something_reading(&sender).await;
     let mut ticker = Ticker::every(loop_time);
 
+    let mut frequency_logger = FrequencyLogger::new("Reading ADC");
+
     loop {
+        frequency_logger.tick();
+
         adc.read(
             &mut analog.rx_dma,
             [
@@ -164,3 +168,36 @@ async fn await_something_reading(sender: &Sender) {
 embassy_stm32::bind_interrupts!(struct Irqs {
     SDMMC1 => sdmmc::InterruptHandler<peripherals::SDMMC1>;
 });
+
+struct FrequencyLogger<'s> {
+    prefix: &'s str,
+    start: Instant,
+    remaining: u64,
+    total: u64,
+}
+
+impl<'s> FrequencyLogger<'s> {
+    fn new(prefix: &'s str) -> Self {
+        Self {
+            prefix,
+            start: Instant::now(),
+            remaining: 100,
+            total: 100,
+        }
+    }
+
+    fn tick(&mut self) {
+        self.remaining -= 1;
+        if self.remaining != 0 {
+            return;
+        }
+
+        let elapsed = self.start.elapsed();
+        let frequency = self.total * 1_000_000 / elapsed.as_micros();
+        info!("{} @ {}hz", self.prefix, frequency);
+
+        self.start = Instant::now();
+        self.total = frequency;
+        self.remaining = self.total;
+    }
+}
