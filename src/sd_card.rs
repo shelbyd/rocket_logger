@@ -1,4 +1,7 @@
+use core::borrow::BorrowMut;
+
 use embassy_stm32::{
+    peripherals,
     sdmmc::{DataBlock, Error, Instance, Sdmmc},
     time::mhz,
 };
@@ -6,11 +9,12 @@ use embassy_time::Instant;
 
 use crate::{
     fmt::{info, unwrap},
-    FrequencyLogger, Irqs, Receiver, SdCard,
+    Irqs, SdCard,
 };
 
-#[embassy_executor::task]
-pub async fn write_to_sd_card(sd_card: SdCard, samples: Receiver) {
+pub async fn sector_writer(
+    sd_card: SdCard,
+) -> SectorWriter<crate::Sample, peripherals::SDMMC1, Sdmmc<'static, peripherals::SDMMC1>> {
     let mut sdmmc = Sdmmc::new_4bit(
         sd_card.sdmmc,
         Irqs,
@@ -25,40 +29,23 @@ pub async fn write_to_sd_card(sd_card: SdCard, samples: Receiver) {
 
     unwrap!(sdmmc.init_card(mhz(25)).await);
 
-    // unwrap!(benchmark_sample_writing::<u8, _>(&mut sdmmc, 100_000).await);
-    // unwrap!(benchmark_sample_writing::<(u16, u16), _>(&mut sdmmc, 100_000).await);
-
-    let mut writer = unwrap!(SectorWriter::<crate::Sample, _>::new(&mut sdmmc).await);
-
-    info!("Beginning logging");
-    drain(&samples);
-
-    let mut frequency_logger = FrequencyLogger::new("Writing to SD");
-    loop {
-        frequency_logger.tick();
-
-        let sample = samples.receive().await;
-        unwrap!(writer.write(sample).await);
-    }
+    unwrap!(SectorWriter::<crate::Sample, _, _>::new(sdmmc).await)
 }
 
-fn drain(samples: &Receiver) {
-    while let Ok(_) = samples.try_receive() {}
-}
-
-struct SectorWriter<'s, T, I: Instance> {
+pub struct SectorWriter<T, I: Instance, S: BorrowMut<Sdmmc<'static, I>>> {
     header: u8,
     next_block: u32,
     buffer: Buffer,
-    sdmmc: &'s mut Sdmmc<'static, I>,
+    sdmmc: S,
+    _i: core::marker::PhantomData<I>,
     _t: core::marker::PhantomData<T>,
 }
 
-impl<'s, T, I: Instance> SectorWriter<'s, T, I> {
-    async fn new(sdmmc: &'s mut Sdmmc<'static, I>) -> Result<Self, Error> {
+impl<T, I: Instance, S: BorrowMut<Sdmmc<'static, I>>> SectorWriter<T, I, S> {
+    async fn new(mut sdmmc: S) -> Result<Self, Error> {
         let mut buffer = Buffer::new(1);
 
-        sdmmc.read_block(0, &mut buffer.block).await?;
+        sdmmc.borrow_mut().read_block(0, &mut buffer.block).await?;
 
         let last_header = buffer.block[0];
         let header = match last_header {
@@ -71,11 +58,12 @@ impl<'s, T, I: Instance> SectorWriter<'s, T, I> {
             next_block: 0,
             buffer,
             sdmmc,
+            _i: core::marker::PhantomData,
             _t: core::marker::PhantomData,
         })
     }
 
-    async fn write(&mut self, data: T) -> Result<(), Error>
+    pub async fn write(&mut self, data: T) -> Result<(), Error>
     where
         T: ToBytes,
     {
@@ -90,14 +78,17 @@ impl<'s, T, I: Instance> SectorWriter<'s, T, I> {
             next_extend = e;
 
             block[0] = self.header;
-            self.sdmmc.write_block(self.next_block, block).await?;
+            self.sdmmc
+                .borrow_mut()
+                .write_block(self.next_block, block)
+                .await?;
 
             self.next_block += 1;
         }
     }
 }
 
-trait ToBytes {
+pub trait ToBytes {
     type Result: AsRef<[u8]>;
 
     fn to_bytes(&self) -> Self::Result;
@@ -177,7 +168,7 @@ async fn benchmark_sample_writing<T, I: Instance>(
 where
     T: Default + Copy + ToBytes,
 {
-    let mut writer = SectorWriter::<T, _>::new(sdmmc).await?;
+    let mut writer = SectorWriter::<T, _, _>::new(sdmmc).await?;
 
     let start = Instant::now();
     for _ in 0..n {

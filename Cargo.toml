@@ -14,10 +14,12 @@ embassy-futures = "0.1.1"
 embassy-stm32 = { version = "0.1.0", features =  ["defmt", "time-driver-any", "stm32h750vb", "memory-x", "unstable-pac", "exti"] }
 embassy-sync = "0.6.0"
 embassy-time = { version = "0.3.1", features = ["tick-hz-1_000_000"] }
+futures = { version = "0.3.30", default-features = false }
 heapless = "0.8.0"
 log = { version = "0.4.22", optional = true }
 panic-halt = "0.2.0"
 panic-probe = { version = "0.3.2", features = ["print-defmt"], optional = true }
+pin-project = { version = "1.1.5", default-features = false }
 
 [[bin]]
 name = "rocket_logger"
